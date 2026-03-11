@@ -192,12 +192,18 @@
   const PASS_M = "zxcv";
   const PASS_ADMIN = "xxx";
   const PASS_RESET = "r";
+  const DEFAULT_API_BASE = "https://api.marcelizaborowski.com";
+  const isLocalHost = ["localhost", "127.0.0.1"].includes(location.hostname);
   const urlConfig = new URLSearchParams(location.search);
   const apiBaseFromUrl = urlConfig.get("apiBase");
   const wsBaseFromUrl = urlConfig.get("wsBase");
   const RAW_API_BASE =
     apiBaseFromUrl ||
-    (window.APP_CONFIG && window.APP_CONFIG.API_BASE ? window.APP_CONFIG.API_BASE : location.origin);
+    (window.APP_CONFIG && window.APP_CONFIG.API_BASE
+      ? window.APP_CONFIG.API_BASE
+      : isLocalHost
+        ? location.origin
+        : DEFAULT_API_BASE);
   const API_BASE = RAW_API_BASE.replace(/\/+$/, "");
   const RAW_WS_BASE =
     wsBaseFromUrl ||
