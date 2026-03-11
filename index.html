@@ -1,0 +1,576 @@
+<div id="app">
+  <style>
+    body {
+      background: white;
+      margin: 0;
+      font-family: Arial;
+    }
+
+    #app {
+      max-width: 1200px;
+      margin: auto;
+      padding: 10px;
+    }
+
+    .tableWrap {
+      overflow-x: auto;
+      width: 100%;
+    }
+
+    table {
+      border-collapse: collapse;
+      min-width: 750px;
+      width: 100%;
+    }
+
+    h1 {
+      text-align: center;
+      color: #c40000;
+    }
+
+    th,
+    td {
+      border: 1px solid #ccc;
+      padding: 6px;
+      text-align: center;
+    }
+
+    th {
+      background: #c40000;
+      color: white;
+    }
+
+    button {
+      background: #c40000;
+      color: white;
+      border: none;
+      padding: 10px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    button:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+
+    .done {
+      background: #d4ffd4;
+    }
+
+    .time {
+      font-weight: bold;
+      color: #007700;
+    }
+
+    .stats {
+      margin-top: 20px;
+      background: #f2f2f2;
+      padding: 10px;
+      border-radius: 8px;
+    }
+
+    .loginPanel {
+      margin-top: 40px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .syncStatus {
+      margin-top: 10px;
+      text-align: center;
+      font-size: 14px;
+      font-weight: bold;
+    }
+
+    .online {
+      color: #0a7a0a;
+    }
+
+    .offline {
+      color: #a30000;
+    }
+
+    input {
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #ccc;
+      width: 120px;
+    }
+
+    #resetBox {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.4);
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+
+    #resetInner {
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      border: 3px solid red;
+      text-align: center;
+    }
+
+    @media (max-width: 700px) {
+      button {
+        padding: 16px;
+        font-size: 18px;
+        min-width: 55px;
+      }
+
+      .time {
+        font-size: 16px;
+      }
+    }
+  </style>
+
+  <h1>Zmagania Muszkieterów</h1>
+
+  <div class="tableWrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Zespół</th>
+          <th>GO</th>
+          <th>M1</th>
+          <th>M2</th>
+          <th>M3</th>
+          <th>M4</th>
+          <th>M5</th>
+          <th>C2/3</th>
+          <th>Czas</th>
+          <th>Usuń</th>
+        </tr>
+      </thead>
+
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <div id="syncStatus" class="syncStatus offline">Brak połączenia</div>
+
+  <div class="loginPanel">
+    <input type="password" id="judgePass" placeholder="Hasło" />
+    <button onclick="loginM()">MZ</button>
+    <button onclick="logoutM()">MW</button>
+
+    <input type="password" id="adminPass" placeholder="Admin" />
+    <button onclick="loginAdmin()">AZ</button>
+    <button onclick="logoutAdmin()">AW</button>
+
+    <button onclick="addTeam()">+M</button>
+    <button onclick="refreshData()">🔄</button>
+  </div>
+
+  <div id="resetBox">
+    <div id="resetInner">
+      <p>Hasło resetu</p>
+
+      <input id="resetInput" type="password" />
+
+      <br /><br />
+
+      <button onclick="confirmReset()">Reset</button>
+      <button onclick="closeReset()">Anuluj</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const PASS_M = "zxcv";
+  const PASS_ADMIN = "xxx";
+  const PASS_RESET = "r";
+  const urlConfig = new URLSearchParams(location.search);
+  const apiBaseFromUrl = urlConfig.get("apiBase");
+  const wsBaseFromUrl = urlConfig.get("wsBase");
+  const RAW_API_BASE =
+    apiBaseFromUrl ||
+    (window.APP_CONFIG && window.APP_CONFIG.API_BASE ? window.APP_CONFIG.API_BASE : location.origin);
+  const API_BASE = RAW_API_BASE.replace(/\/+$/, "");
+  const RAW_WS_BASE =
+    wsBaseFromUrl ||
+    (window.APP_CONFIG && window.APP_CONFIG.WS_BASE
+      ? window.APP_CONFIG.WS_BASE
+      : API_BASE.replace(/^http:/, "ws:").replace(/^https:/, "wss:"));
+  const WS_BASE = RAW_WS_BASE.replace(/\/+$/, "");
+
+  const points = ["GO", "M1", "M2", "M3", "M4", "M5", "C2/3"];
+  const clientId = crypto.randomUUID ? crypto.randomUUID() : "client-" + Math.random().toString(36).slice(2);
+
+  let modeM = false;
+  let modeAdmin = false;
+  let resetTarget = null;
+  let data = [];
+  let ws = null;
+
+  function createData() {
+    let arr = [];
+
+    for (let i = 1; i <= 10; i++) {
+      let obj = { name: "Zespół " + i };
+
+      points.forEach((p) => (obj[p] = null));
+
+      arr.push(obj);
+    }
+
+    return arr;
+  }
+
+  function setSyncStatus(text, cssClass) {
+    let el = document.getElementById("syncStatus");
+    el.textContent = text;
+    el.className = "syncStatus " + cssClass;
+  }
+
+  async function loadState() {
+    let response = await fetch(API_BASE + "/api/state");
+
+    if (!response.ok) {
+      throw new Error("Nie udało się pobrać danych");
+    }
+
+    let payload = await response.json();
+
+    if (Array.isArray(payload.data)) {
+      data = payload.data;
+    } else {
+      data = createData();
+    }
+
+    render();
+  }
+
+  async function save() {
+    let response = await fetch(API_BASE + "/api/state", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ data, clientId }),
+    });
+
+    if (!response.ok) {
+      throw new Error("Nie udało się zapisać danych");
+    }
+  }
+
+  function connectRealtime() {
+    ws = new WebSocket(WS_BASE + "/ws");
+
+    ws.onopen = () => {
+      setSyncStatus("Połączono na żywo", "online");
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        let payload = JSON.parse(event.data);
+
+        if (payload.type === "state" && Array.isArray(payload.data)) {
+          data = payload.data;
+          render();
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    };
+
+    ws.onerror = () => {
+      ws.close();
+    };
+
+    ws.onclose = () => {
+      setSyncStatus("Rozłączono, ponawianie...", "offline");
+      setTimeout(connectRealtime, 2000);
+    };
+  }
+
+  function now() {
+    let d = new Date();
+
+    let h = d.getHours().toString().padStart(2, "0");
+    let m = d.getMinutes().toString().padStart(2, "0");
+
+    return h + ":" + m;
+  }
+
+  function toMin(t) {
+    if (!t) return null;
+
+    let [h, m] = t.split(":");
+
+    return Number(h) * 60 + Number(m);
+  }
+
+  function calcTime(t) {
+    let start = t["GO"] ? toMin(t["GO"].show) : null;
+    let end = null;
+
+    points.forEach((p) => {
+      if (t[p]) end = toMin(t[p].show);
+    });
+
+    if (start !== null && end !== null) {
+      let diff = end - start;
+
+      let h = Math.floor(diff / 60);
+      let m = diff % 60;
+
+      return h + "h " + m + "m";
+    }
+
+    return "-";
+  }
+
+  function setPoint(i, p) {
+    if (!modeM) return;
+
+    let idx = points.indexOf(p);
+
+    if (idx > 0) {
+      let prev = points[idx - 1];
+
+      if (!data[i][prev]) {
+        alert("Najpierw " + prev);
+        return;
+      }
+    }
+
+    if (data[i][p]) return;
+
+    data[i][p] = {
+      show: now(),
+      full: Date.now(),
+    };
+
+    save().catch((e) => {
+      console.error(e);
+      alert("Błąd zapisu danych");
+    });
+    render();
+  }
+
+  function askReset(i, p) {
+    if (!modeM && !modeAdmin) return;
+
+    resetTarget = { i, p };
+
+    document.getElementById("resetBox").style.display = "flex";
+  }
+
+  function confirmReset() {
+    let v = document.getElementById("resetInput").value;
+
+    if (v !== PASS_RESET) {
+      alert("Błędne hasło");
+      return;
+    }
+
+    let record = data[resetTarget.i][resetTarget.p];
+
+    if (!modeAdmin) {
+      if (record) {
+        let diff = (Date.now() - record.full) / 60000;
+
+        if (diff > 60) {
+          alert("Reset niemożliwy — minęła ponad godzina.");
+          closeReset();
+          return;
+        }
+      }
+    }
+
+    data[resetTarget.i][resetTarget.p] = null;
+
+    save().catch((e) => {
+      console.error(e);
+      alert("Błąd zapisu danych");
+    });
+    closeReset();
+    render();
+  }
+
+  function closeReset() {
+    document.getElementById("resetInput").value = "";
+    document.getElementById("resetBox").style.display = "none";
+  }
+
+  function addTeam() {
+    if (!modeAdmin) {
+      alert("Zaloguj admina");
+      return;
+    }
+
+    let name = "Zespół " + (data.length + 1);
+
+    let obj = { name: name };
+
+    points.forEach((p) => (obj[p] = null));
+
+    data.push(obj);
+
+    save().catch((e) => {
+      console.error(e);
+      alert("Błąd zapisu danych");
+    });
+    render();
+  }
+
+  function removeTeam(i) {
+    if (!modeAdmin) return;
+
+    data.splice(i, 1);
+
+    save().catch((e) => {
+      console.error(e);
+      alert("Błąd zapisu danych");
+    });
+    render();
+  }
+
+  function refreshData() {
+    if (!modeAdmin) {
+      alert("Tylko admin");
+      return;
+    }
+
+    loadState().catch((e) => {
+      console.error(e);
+      alert("Nie udało się odświeżyć danych");
+    });
+  }
+
+  function loginM() {
+    let p = document.getElementById("judgePass").value;
+
+    if (p === PASS_M) {
+      modeM = true;
+      alert("MZ aktywne");
+      render();
+    } else {
+      alert("Błędne hasło");
+    }
+  }
+
+  function logoutM() {
+    modeM = false;
+    alert("MW");
+    render();
+  }
+
+  function loginAdmin() {
+    let p = document.getElementById("adminPass").value;
+
+    if (p === PASS_ADMIN) {
+      modeAdmin = true;
+      alert("AZ aktywne");
+      render();
+    } else {
+      alert("Błędne hasło");
+    }
+  }
+
+  function logoutAdmin() {
+    modeAdmin = false;
+    alert("AW");
+    render();
+  }
+
+  function render() {
+    let body = document.getElementById("tableBody");
+
+    body.innerHTML = "";
+
+    data.forEach((t, i) => {
+      let row = "<tr>";
+
+      row += "<td>" + t.name + "</td>";
+
+      points.forEach((p) => {
+        let time = t[p];
+
+        if (time) {
+          row += `<td class="done">
+<span class="time">${time.show}</span><br>
+<button ${modeM || modeAdmin ? "" : "disabled"} onclick="askReset(${i},'${p}')">↺</button>
+</td>`;
+        } else {
+          row += `<td>
+<button ${modeM ? "" : "disabled"} onclick="setPoint(${i},'${p}')">✔</button>
+</td>`;
+        }
+      });
+
+      row += "<td>" + calcTime(t) + "</td>";
+
+      row += `<td><button ${modeAdmin ? "" : "disabled"} onclick="removeTeam(${i})">✖</button></td>`;
+
+      row += "</tr>";
+
+      body.innerHTML += row;
+    });
+
+    stats();
+  }
+
+  function stats() {
+    let best = null;
+    let bestTime = 999999;
+
+    data.forEach((t) => {
+      let start = t["GO"] ? toMin(t["GO"].show) : null;
+      let end = null;
+
+      points.forEach((p) => {
+        if (t[p]) end = toMin(t[p].show);
+      });
+
+      if (start !== null && end !== null) {
+        let diff = end - start;
+
+        if (diff < bestTime) {
+          bestTime = diff;
+          best = t.name;
+        }
+      }
+    });
+
+    let finished = data.filter((t) => t["C2/3"]).length;
+
+    document.getElementById("stats").innerHTML =
+      "Ukończyło trasę: <b>" +
+      finished +
+      "/" +
+      data.length +
+      "</b><br>" +
+      "Najszybszy muszkieter: <b>" +
+      (best || "-") +
+      "</b>";
+  }
+
+  async function init() {
+    try {
+      await loadState();
+      connectRealtime();
+    } catch (e) {
+      console.error(e);
+      setSyncStatus("Brak połączenia z serwerem", "offline");
+      data = createData();
+      render();
+    }
+  }
+
+  init();
+</script>
